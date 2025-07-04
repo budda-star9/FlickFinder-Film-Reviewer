@@ -18,11 +18,10 @@ This is a Streamlit-based Movie Recommendation System that lets users filter mov
 
 ## 📁 Project Structure
 FlickFinder/
-│
-├── movies.csv             # 🎞️ Movie metadata (required)
-├── main.py                # 🧠 Streamlit app code
-├── requirements.txt       # 📦 Python dependencies
-└── README.md              # 📖 Project description and usage
+--movies.csv
+--main.py
+--requirements.txt
+--README.MD
 
 > 💡 You must provide your own `movies.csv` file with columns like `title`, `genres`, `original_language`, `vote_average`, and `release_date`.
 
