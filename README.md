@@ -17,14 +17,12 @@ This is a Streamlit-based Movie Recommendation System that lets users filter mov
 ---
 
 ## 📁 Project Structure
-
-movie-recommender/
+FlickFinder/
 │
-├── movies.csv # Movie metadata (required)
-├── main.py # Streamlit app code
-├── requirements.txt # Python dependencies
-└── README.md # This file
-
+├── movies.csv             # 🎞️ Movie metadata (required)
+├── main.py                # 🧠 Streamlit app code
+├── requirements.txt       # 📦 Python dependencies
+└── README.md              # 📖 Project description and usage
 
 > 💡 You must provide your own `movies.csv` file with columns like `title`, `genres`, `original_language`, `vote_average`, and `release_date`.
 
@@ -37,17 +35,18 @@ movie-recommender/
 ```bash
 git clone https://github.com/yourusername/movie-recommender.git
 cd movie-recommender
-
+```
 2. Create a virtual environment (optional but recommended)
-
+```
 python -m venv .venv
 source .venv/bin/activate       # On Linux/macOS
 .venv\Scripts\activate          # On Windows
-
+```
 3. Install dependencies
-
+```
 pip install -r requirements.txt
-
+```
 ▶️ Run the App
-
+```
 streamlit run main.py
+```
