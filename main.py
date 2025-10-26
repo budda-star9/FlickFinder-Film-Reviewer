@@ -1,103 +1,77 @@
-
 import streamlit as st
 import pandas as pd
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import os
+from openai import OpenAI
 
-# Load and prepare data
-movies = pd.read_csv("movies.csv", encoding="utf-8-sig")
-movies = movies.rename(columns={"id": "movieId"})
+# --- SETUP ---
+client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", "your_api_key_here"))
 
-# Clean up data
-movies["genres"] = movies["genres"].fillna("").apply(lambda x: " ".join(x.replace("|", " ").replace(",", " ").split()))
-movies["release_year"] = pd.to_datetime(movies["release_date"], errors="coerce").dt.year
-movies["vote_average"] = movies["vote_average"].fillna(0)
+# --- LOAD MOVIES ---
+@st.cache_data
+def load_movies():
+    try:
+        df = pd.read_csv("movies.csv")
+        return df
+    except FileNotFoundError:
+        st.error("⚠️ movies.csv not found! Please add the file to your project folder.")
+        return pd.DataFrame()
 
-# Language code to full name mapping
-language_map = {
-    "en": "English",
-    "hi": "Hindi",
-    "te": "Telugu",
-    "ta": "Tamil",
-    "fr": "French",
-    "kn": "Kannada",
-    "ml": "Malayalam",
-    "mr": "Marathi"
-}
-movies["language_full"] = movies["original_language"].map(language_map)
+# --- STORY EVALUATION FUNCTION ---
+def evaluate_story(story_text):
+    prompt = f"""
+    Evaluate this story using Dan Harmon's 8-Step Story Circle:
+    1. You — A character is in a zone of comfort.
+    2. Need — But they want something.
+    3. Go — They enter an unfamiliar situation.
+    4. Search — Adapt to it.
+    5. Find — Get what they wanted.
+    6. Take — Pay a heavy price for it.
+    7. Return — Then return to their familiar situation.
+    8. Change — Having changed.
 
+    Identify which steps are clearly present (Yes/No). Calculate the completion
+    percentage (steps_present ÷ 8). If completion ≥ 0.7, mark as "Complete."
+    If < 0.7, list missing elements and suggestions to improve.
 
-# Sidebar filters
-st.sidebar.header("🎛️ Filters")
+    Return results as JSON with keys:
+    steps_present, completion_score, result, feedback.
 
-# Genres
-all_genres = sorted(set(g for s in movies["genres"].dropna() for g in s.split()))
-selected_genres = st.sidebar.multiselect("🎭 Select Genre(s)", all_genres)
+    Story:
+    {story_text}
+    """
 
-# Languages
-languages = sorted(movies["language_full"].dropna().unique())
-selected_language = st.sidebar.selectbox("🌐 Language", ["Any"] + languages)
+    response = client.chat.completions.create(
+        model="gpt-5",
+        messages=[{"role": "system", "content": "You are a story structure evaluator."},
+                  {"role": "user", "content": prompt}]
+    )
 
-# Rating filter
-min_rating = st.sidebar.slider("⭐ Minimum Rating", 0.0, 10.0, 5.0, step=0.1)
+    return response.choices[0].message.content
 
-# Release year filter
-min_year = int(movies["release_year"].dropna().min())
-max_year = int(movies["release_year"].dropna().max())
-selected_year_range = st.sidebar.slider("📅 Release Year Range", min_year, max_year, (min_year, max_year))
+# --- STREAMLIT UI ---
+st.title("🎬 FlickFinder: Story Evaluator & Movie Browser")
+st.write("Upload your stories and check if they follow Dan Harmon's 8-Step Story Circle (70–80% minimum).")
 
-# App title
-st.title("🎬 Real-Time Movie Recommendation System")
+tab1, tab2 = st.tabs(["📚 Movie Browser", "✍️ Story Submission"])
 
-# Apply filters
-filtered_movies = movies.copy()
+# --- TAB 1: MOVIE BROWSER ---
+with tab1:
+    st.header("Browse Movies")
+    df = load_movies()
+    if not df.empty:
+        st.dataframe(df)
+    else:
+        st.info("Upload a `movies.csv` file with columns like title, genres, language, etc.")
 
-if selected_language != "Any":
-    filtered_movies = filtered_movies[filtered_movies["language_full"] == selected_language]
+# --- TAB 2: STORY SUBMISSION ---
+with tab2:
+    st.header("Submit Your Story for Evaluation")
+    story_text = st.text_area("Paste your story text here:", height=300)
+    if st.button("Evaluate Story"):
+        if story_text.strip():
+            with st.spinner("Analyzing story structure..."):
+                result = evaluate_story(story_text)
+            st.success("✅ Evaluation Complete!")
+            st.text_area("AI Feedback", result, height=400)
+        else:
+            st.warning("Please enter a story first.")
 
-if selected_genres:
-    filtered_movies = filtered_movies[filtered_movies["genres"].apply(
-        lambda g: all(genre in g.split() for genre in selected_genres))]
-
-filtered_movies = filtered_movies[
-    (filtered_movies["vote_average"] >= min_rating) &
-    (filtered_movies["release_year"].notna()) &
-    (filtered_movies["release_year"] >= selected_year_range[0]) &
-    (filtered_movies["release_year"] <= selected_year_range[1])
-]
-
-filtered_movies = filtered_movies.reset_index(drop=True)
-
-# Show filtered list
-st.markdown(f"🎯 **{len(filtered_movies)} movies found** matching your filters.")
-
-if filtered_movies.empty:
-    st.warning("No movies found with the selected filters.")
-else:
-    st.markdown("### 📋 Filtered Movies")
-    st.dataframe(filtered_movies[["title", "release_year", "vote_average"]])
-
-    #st.dataframe(filtered_movies[["title", "release_year", "vote_average"]])
-
-    selected_movie = st.selectbox("🎞️ Choose a Movie for Recommendations", filtered_movies["title"].tolist())
-
-    tfidf = TfidfVectorizer(stop_words="english")
-    tfidf_matrix = tfidf.fit_transform(filtered_movies["genres"])
-    cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
-    indices = pd.Series(filtered_movies.index, index=filtered_movies["title"]).drop_duplicates()
-
-    def get_recommendations(title, cosine_sim=cosine_sim):
-        idx = indices[title]
-        sim_scores = list(enumerate(cosine_sim[idx]))
-        sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-        sim_scores = sim_scores[1:11]
-        movie_indices = [i[0] for i in sim_scores]
-        return filtered_movies.iloc[movie_indices]
-
-    if selected_movie:
-        recommendations = get_recommendations(selected_movie)
-        st.markdown("### 🧠 Recommended Movies")
-        for _, row in recommendations.iterrows():
-            st.markdown(f"**{row['title']}** ({int(row['release_year'])}) – ⭐ {row['vote_average']}")
