@@ -5,7 +5,26 @@ import datetime
 from openai import OpenAI
 import gspread
 from google.oauth2.service_account import Credentials
+import streamlit as st
+from filmfreeway_analyzer import filmfreeway_interface, FilmFreewayAnalyzer
 
+# Your existing imports and setup...
+
+def main():
+    # Your existing setup...
+    
+    # In your navigation:
+    with st.sidebar:
+        st.header("🔗 External Tools")
+        if st.button("🎬 Analyze FilmFreeway Project"):
+            st.session_state.page = 'filmfreeway'
+    
+    # Page routing:
+    if st.session_state.page == 'filmfreeway':
+        filmfreeway_interface(client)
+    else:
+        # Your existing main app
+        pass
 # === PAGE CONFIG ===
 st.set_page_config(page_title="🎬 FlickFinder: Film Evaluator", layout="wide")
 st.title("🎞️ FlickFinder — AI Film Review & Story Analysis")
