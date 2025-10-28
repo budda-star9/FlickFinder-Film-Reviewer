@@ -7,7 +7,73 @@ import gspread
 from google.oauth2.service_account import Credentials
 import streamlit as st
 from filmfreeway_analyzer import filmfreeway_interface, FilmFreewayAnalyzer
+import streamlit as st
+from filmfreeway_analyzer import filmfreeway_interface, display_saved_projects
+from scoring_system import ScoringSystem
+from export_system import export_interface
 
+def main():
+    st.set_page_config(page_title="FlickFinder", page_icon="🎬", layout="wide")
+    
+    # Initialize systems
+    if 'scoring_system' not in st.session_state:
+        st.session_state.scoring_system = ScoringSystem()
+    if 'all_scores' not in st.session_state:
+        st.session_state.all_scores = []
+    
+    # Navigation
+    with st.sidebar:
+        st.header("🎬 FlickFinder")
+        st.markdown("---")
+        
+        page_option = st.radio(
+            "Navigate to:",
+            ["🏠 Home", "🔗 FilmFreeway", "🎯 Score Films", "📊 Export", "📚 Saved Projects"]
+        )
+    
+    # Page routing
+    if page_option == "🏠 Home":
+        st.title("Welcome to FlickFinder")
+        st.markdown("Professional film evaluation platform with AI-powered insights")
+        
+    elif page_option == "🔗 FilmFreeway":
+        filmfreeway_interface(client)
+        
+    elif page_option == "🎯 Score Films":
+        scoring_interface()
+        
+    elif page_option == "📊 Export":
+        export_interface()
+        
+    elif page_option == "📚 Saved Projects":
+        display_saved_projects()
+
+def scoring_interface():
+    """Scoring interface for films"""
+    st.header("🎯 Film Scoring")
+    
+    # Get films to score (from saved projects or manual entry)
+    films_to_score = st.session_state.get('filmfreeway_projects', [])
+    film_titles = [project.get('title', f'Project {i+1}') for i, project in enumerate(films_to_score)]
+    
+    if not film_titles:
+        st.info("No films available for scoring. Import some films from FilmFreeway first.")
+        return
+    
+    selected_film = st.selectbox("Select film to score:", film_titles)
+    
+    if selected_film:
+        score_result = st.session_state.scoring_system.get_scorecard_interface(selected_film)
+        
+        if score_result:
+            # Calculate weighted score
+            score_result['weighted_score'] = st.session_state.scoring_system.calculate_weighted_score(
+                score_result['scores']
+            )
+            
+            # Store score
+            st.session_state.all_scores.append(score_result)
+            st.success(f"✅ Score saved! Weighted score: {score_result['weighted_score']}/5")
 # Your existing imports and setup...
 
 def main():
