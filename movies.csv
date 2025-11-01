@@ -9,3 +9,4 @@ The Godfather,Crime|Drama,en,9.2,1972-03-24,,
 Gladiator,Action|Adventure|Drama,en,8.5,2000-05-05,,
 The Wanderer,Drama,English,8.1,2024-06-12,https://filmfreeway.com/TheWanderer,"A lonely traveler seeks redemption in a foreign land, facing the ghosts of his past."
 Skyward Bound,Adventure,English,7.5,2023-09-10,https://filmfreeway.com/SkywardBound,A pilot risks everything to discover freedom above the clouds.
+save_review_to_csv(movie_title, ai_review, source="CSV")

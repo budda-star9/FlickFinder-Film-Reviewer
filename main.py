@@ -3,6 +3,83 @@ from filmfreeway_analyzer import filmfreeway_interface, display_saved_projects
 from scoring_system import ScoringSystem
 from export_system import export_interface
 from openai import OpenAI
+import tempfile
+from pytube import YouTube
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from openai import OpenAI
+
+# Initialize OpenAI client (reuse your secret)
+client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", ""))
+
+# --- Add Tabs for Modes ---
+tab1, tab2 = st.tabs(["📊 CSV Movie Reviews", "🎥 YouTube Film Analysis"])
+
+# --------------------------
+# TAB 2: YOUTUBE FILM REVIEW
+# --------------------------
+with tab2:
+    st.header("🎥 YouTube Film Analysis")
+    st.caption("Analyze YouTube films using Dan Harmon's Story Circle + Joseph Campbell's Hero’s Journey")
+
+    youtube_url = st.text_input("Paste a YouTube video URL to analyze:")
+
+    if youtube_url:
+        try:
+            yt = YouTube(youtube_url)
+            st.video(youtube_url)
+            st.markdown(f"**🎞️ Title:** {yt.title}")
+            st.markdown(f"**📅 Published:** {yt.publish_date}")
+            st.markdown(f"**🕒 Length:** {yt.length // 60} minutes")
+
+            # Attempt to retrieve transcript
+            transcript_text = None
+            try:
+                video_id = yt.video_id
+                transcript = YouTubeTranscriptApi.get_transcript(video_id)
+                transcript_text = " ".join([t["text"] for t in transcript])
+                st.success("✅ Transcript retrieved successfully!")
+            except (TranscriptsDisabled, NoTranscriptFound):
+                st.warning("⚠️ No transcript found. AI will analyze based on metadata.")
+            except Exception as e:
+                st.warning(f"⚠️ Transcript fetch issue: {e}")
+
+            # Prompt for AI review
+            prompt = f"""
+            You are a film festival reviewer.
+            Analyze and score this film based on:
+            - Dan Harmon's 8-Step Story Circle (minimum 70–80% adherence)
+            - Joseph Campbell's Hero's Journey
+
+            Weighted Categories (Total 100 points):
+            - Storytelling 25%
+            - Technical 20%
+            - Directing 20%
+            - Cultural/Social Impact 20%
+            - Artistic Vision 15%
+
+            Film title: {yt.title}
+            Transcript: {transcript_text if transcript_text else '[No transcript available]'}
+            Provide:
+            1. Short synopsis
+            2. Strengths and weaknesses
+            3. Weighted numeric scores for each category
+            4. Final total score /100
+            5. Jury summary paragraph.
+            """
+
+            with st.spinner("AI reviewing in progress..."):
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+            st.subheader("🧾 AI Review Summary")
+            st.markdown(response.choices[0].message.content)
+
+        except Exception as e:
+            st.error(f"❌ Error processing YouTube video: {e}")
+    else:
+        st.info("Please enter a valid YouTube link to begin.")
 
 def main():
     st.set_page_config(page_title="FlickFinder", page_icon="🎬", layout="wide")
