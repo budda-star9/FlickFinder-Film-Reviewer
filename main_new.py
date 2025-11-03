@@ -6,6 +6,19 @@ from openai import OpenAI
 from pytube import YouTube
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from urllib.parse import urlparse, parse_qs
+from ai_prompt import build_film_review_prompt
+
+prompt = build_film_review_prompt(
+    film_metadata=f"Title: {custom_title}\nChannel: {yt.author}\nLength: {yt.length // 60} min\nTags: {yt.keywords if hasattr(yt, 'keywords') else 'N/A'}",
+    transcript_text=transcript_text,
+    audience_reception="Views: 1500 | Likes: 120 | Comments: 15",
+    visual_context=visual_context  # can be empty string if toggle off
+)
+
+response = client.chat.completions.create(
+    model="gpt-4o-mini",  # or gpt-5 if you want multimodal in future
+    messages=[{"role": "user", "content": prompt}],
+)
 
 # --- Utility function to get video ID safely ---
 def get_video_id(url):
