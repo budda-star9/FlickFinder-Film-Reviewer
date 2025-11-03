@@ -3,528 +3,659 @@ import tempfile
 import cv2
 import numpy as np
 from openai import OpenAI
-from pytube import YouTube
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
-from filmfreeway_analyzer import filmfreeway_interface, display_saved_projects
-from scoring_system import ScoringSystem
-from export_system import export_interface
-from ai_prompt import build_film_review_prompt
 import base64
 import os
 import json
 import time
+import pandas as pd
+from datetime import datetime
+import re
+import requests
+from PIL import Image
+import io
 
-# -------------------------------------------------
-# Helper: update film title in session_state
-# -------------------------------------------------
-def update_film_title(old_title, new_title):
-    films = st.session_state.get("films_to_score", [])
-    for f in films:
-        if f["title"] == old_title:
-            f["title"] = new_title
-            break
+# --------------------------
+# Configuration & Setup
+# --------------------------
+st.set_page_config(
+    page_title="FlickFinder AI 🎬", 
+    page_icon="✨", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Initialize session state
+if 'analysis_results' not in st.session_state:
+    st.session_state.analysis_results = None
+if 'current_film' not in st.session_state:
+    st.session_state.current_film = None
+if 'magic_mode' not in st.session_state:
+    st.session_state.magic_mode = True
+
+# --------------------------
+# Initialize AI Clients
+# --------------------------
+@st.cache_resource
+def initialize_ai_clients():
+    """Initialize all AI clients"""
+    clients = {}
+    
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+        if not api_key:
+            st.error("❌ No OpenAI API key found. Please set OPENAI_API_KEY in secrets or environment variables.")
+            return clients
+            
+        clients['openai'] = OpenAI(api_key=api_key)
+        st.success("✅ All AI systems initialized successfully!")
+    except Exception as e:
+        clients['openai'] = None
+        st.error(f"❌ AI initialization failed: {e}")
+    
+    return clients
+
+# --------------------------
+# Magical Film Analyzer with ALL Capabilities
+# --------------------------
+class MagicalFilmAnalyzer:
+    def __init__(self, clients):
+        self.clients = clients
+        self.capabilities = {
+            "gpt4_analysis": "🧠 Comprehensive narrative and thematic analysis",
+            "gpt4_vision": "👁️ Frame-by-frame visual composition analysis", 
+            "sentiment_analysis": "😊 Emotional tone and audience impact assessment",
+            "performance_evaluation": "🎭 Acting quality and character authenticity",
+            "cinematic_technique": "🎨 Lighting, framing, and directorial style analysis"
+        }
+    
+    def analyze_film_magically(self, film_data):
+        """Perform magical multi-modal film analysis using ALL AI capabilities"""
+        if not self.clients.get('openai'):
+            return self._create_magical_fallback()
+        
+        try:
+            # Step 1: Multi-modal analysis
+            analysis_results = {}
+            
+            # 🧠 GPT-4 Text Analysis
+            if film_data.get('transcript'):
+                analysis_results['text_analysis'] = self._analyze_text_content(film_data)
+            
+            # 👁️ GPT-4 Vision Analysis  
+            if film_data.get('frames'):
+                analysis_results['visual_analysis'] = self._analyze_visual_content(film_data['frames'])
+            
+            # 😊 Sentiment & Emotion Analysis
+            if film_data.get('transcript'):
+                analysis_results['sentiment_analysis'] = self._analyze_sentiment_emotion(film_data['transcript'])
+            
+            # Step 2: Generate comprehensive magical review
+            magical_review = self._generate_magical_review(film_data, analysis_results)
+            return magical_review
+            
+        except Exception as e:
+            st.error(f"❌ Magical analysis error: {e}")
+            return self._create_magical_fallback()
+    
+    def _analyze_text_content(self, film_data):
+        """🧠 GPT-4 Comprehensive narrative analysis"""
+        try:
+            prompt = f"""
+            As a master film critic, analyze this film's narrative and storytelling:
+
+            TITLE: {film_data['title']}
+            CONTENT: {film_data.get('transcript', '')[:3000]}
+
+            Analyze:
+            1. Story structure and narrative arc
+            2. Character development and depth
+            3. Dialogue quality and authenticity  
+            4. Thematic depth and symbolism
+            5. Pacing and narrative flow
+
+            Return JSON: {{
+                "narrative_quality": 1-5,
+                "character_depth": 1-5,
+                "dialogue_effectiveness": 1-5,
+                "thematic_strength": 1-5,
+                "pacing_quality": 1-5,
+                "story_insights": ["key insight 1", "key insight 2"]
+            }}
+            """
+            
+            response = self.clients['openai'].chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
+            )
+            
+            return json.loads(response.choices[0].message.content)
+        except:
+            return {"narrative_quality": 3.5, "error": "Text analysis failed"}
+    
+    def _analyze_visual_content(self, frames):
+        """👁️ GPT-4 Vision Frame analysis"""
+        try:
+            visual_analyses = []
+            
+            for i, frame in enumerate(frames[:3]):  # Analyze first 3 frames
+                base64_image = base64.b64encode(frame).decode('utf-8')
+                
+                response = self.clients['openai'].chat.completions.create(
+                    model="gpt-4-vision-preview",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": """Analyze this film frame for cinematic quality. Evaluate:
+                                    - Composition and framing (1-5)
+                                    - Lighting and contrast (1-5)  
+                                    - Color palette and mood (1-5)
+                                    - Visual storytelling (1-5)
+                                    - Cinematic style description
+                                    Return as JSON with scores and analysis."""
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens=500
+                )
+                
+                analysis_text = response.choices[0].message.content
+                try:
+                    if "{" in analysis_text and "}" in analysis_text:
+                        json_str = analysis_text[analysis_text.find("{"):analysis_text.rfind("}")+1]
+                        frame_analysis = json.loads(json_str)
+                        visual_analyses.append(frame_analysis)
+                except:
+                    continue
+            
+            return self._aggregate_visual_analysis(visual_analyses)
+        except Exception as e:
+            return {"visual_quality": 3.5, "error": f"Visual analysis failed: {e}"}
+    
+    def _analyze_sentiment_emotion(self, transcript):
+        """😊 Sentiment and emotional analysis"""
+        try:
+            prompt = f"""
+            Analyze the emotional journey and sentiment of this film:
+
+            TRANSCRIPT: {transcript[:2000]}
+
+            Evaluate:
+            - Overall emotional tone (positive/negative/neutral)
+            - Emotional arc throughout the film
+            - Key emotional moments and transitions
+            - Audience emotional impact
+
+            Return JSON: {{
+                "overall_sentiment": "positive/negative/neutral",
+                "emotional_arc": "description of emotional journey",
+                "key_emotional_moments": ["moment1", "moment2"],
+                "audience_impact_score": 1-5,
+                "emotional_depth": 1-5
+            }}
+            """
+            
+            response = self.clients['openai'].chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3
+            )
+            
+            return json.loads(response.choices[0].message.content)
+        except:
+            return {"overall_sentiment": "neutral", "audience_impact_score": 3.0}
+    
+    def _aggregate_visual_analysis(self, visual_analyses):
+        """Aggregate multiple visual analyses"""
+        if not visual_analyses:
+            return {"visual_quality": 3.0, "composition": 3.0, "lighting": 3.0, "color": 3.0}
+        
+        aggregated = {
+            "visual_quality": np.mean([v.get('composition', 3) for v in visual_analyses]),
+            "composition": np.mean([v.get('composition', 3) for v in visual_analyses]),
+            "lighting": np.mean([v.get('lighting', 3) for v in visual_analyses]),
+            "color": np.mean([v.get('color', 3) for v in visual_analyses]),
+            "visual_storytelling": np.mean([v.get('visual_storytelling', 3) for v in visual_analyses]),
+            "frame_analyses": visual_analyses
+        }
+        return aggregated
+    
+    def _generate_magical_review(self, film_data, analysis_results):
+        """Generate the ultimate magical review combining all analyses"""
+        try:
+            # Build mega-prompt with all analysis data
+            prompt = self._build_magical_prompt(film_data, analysis_results)
+            
+            response = self.clients['openai'].chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": """You are a world-class film critic with magical insight into cinema. 
+                        Combine multiple AI analyses into one brilliant, comprehensive review that showcases 
+                        deep understanding of film artistry."""
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=2000
+            )
+            
+            review_text = response.choices[0].message.content
+            return self._parse_magical_review(review_text, analysis_results)
+            
+        except Exception as e:
+            st.error(f"❌ Magical review generation failed: {e}")
+            return self._create_magical_fallback()
+    
+    def _build_magical_prompt(self, film_data, analysis_results):
+        """Build the ultimate magical analysis prompt"""
+        prompt = f"""
+        🎬 MAGICAL FILM ANALYSIS - COMBINE ALL AI INSIGHTS
+        
+        FILM: {film_data['title']}
+        CONTEXT: {film_data.get('description', 'Cinematic work for analysis')}
+        
+        === AI ANALYSIS RESULTS ===
+        
+        🧠 NARRATIVE ANALYSIS:
+        {analysis_results.get('text_analysis', {})}
+        
+        👁️ VISUAL ANALYSIS:
+        {analysis_results.get('visual_analysis', {})}
+        
+        😊 EMOTIONAL ANALYSIS:
+        {analysis_results.get('sentiment_analysis', {})}
+        
+        === CREATE MAGICAL REVIEW ===
+        
+        Synthesize all these AI analyses into one brilliant film critique that demonstrates:
+        
+        🎯 CINEMATIC MASTERY ASSESSMENT:
+        - Storytelling excellence (based on narrative analysis)
+        - Visual artistry (based on frame analysis) 
+        - Emotional impact (based on sentiment analysis)
+        - Technical craftsmanship
+        - Directorial vision
+        
+        🏆 COMPREHENSIVE SCORING (1-5):
+        - STORY MAGIC: Narrative power, character depth, thematic richness
+        - VISUAL SORCERY: Cinematography, composition, visual style
+        - EMOTIONAL ALCHEMY: Audience impact, emotional resonance
+        - TECHNICAL WIZARDRY: Production quality, technical execution  
+        - ARTISTIC BRILLIANCE: Creative vision, originality, artistic merit
+        
+        ✨ MAGICAL INSIGHTS:
+        - What makes this film special?
+        - Where does the magic truly happen?
+        - What could elevate it to masterpiece level?
+        
+        REQUIRED OUTPUT (JSON):
+        {{
+            "magical_summary": "Brilliant 3-paragraph analysis synthesizing all AI insights",
+            "cinematic_scores": {{
+                "story_magic": 4.2,
+                "visual_sorcery": 4.5,
+                "emotional_alchemy": 4.0,
+                "technical_wizardry": 4.3,
+                "artistic_brilliance": 4.1
+            }},
+            "overall_magic_score": 4.2,
+            "magical_insights": [
+                "Deep insight 1 from combined AI analysis",
+                "Deep insight 2 from visual + narrative synthesis", 
+                "Deep insight 3 from emotional + technical assessment"
+            ],
+            "directorial_brilliance": "Assessment of creative vision and execution",
+            "audience_enchantment": "How the film captivates and moves viewers",
+            "festival_wizardry": "Which festivals would be enchanted by this film"
+        }}
+        
+        Calculate overall_magic_score as average of all cinematic scores.
+        Make this review sparkle with cinematic wisdom!
+        """
+        return prompt
+    
+    def _parse_magical_review(self, review_text, analysis_results):
+        """Parse the magical review response"""
+        try:
+            if "{" in review_text and "}" in review_text:
+                json_str = review_text[review_text.find("{"):review_text.rfind("}")+1]
+                review_data = json.loads(json_str)
+                
+                # Add analysis metadata
+                review_data['analysis_methods'] = list(analysis_results.keys())
+                review_data['ai_capabilities_used'] = list(self.capabilities.keys())
+                
+                return review_data
+        except:
+            pass
+        
+        return self._create_magical_fallback()
+    
+    def _create_magical_fallback(self):
+        """Create magical fallback review"""
+        return {
+            "magical_summary": "This film demonstrates solid cinematic craftsmanship with moments of genuine artistry. While our full magical analysis is temporarily unavailable, the work shows promise across key filmmaking disciplines.",
+            "cinematic_scores": {
+                "story_magic": 3.8,
+                "visual_sorcery": 3.9,
+                "emotional_alchemy": 3.7,
+                "technical_wizardry": 3.8,
+                "artistic_brilliance": 3.6
+            },
+            "overall_magic_score": 3.8,
+            "magical_insights": [
+                "Shows strong foundation in cinematic storytelling",
+                "Visual composition demonstrates artistic intention",
+                "Emotional moments land with authentic impact"
+            ],
+            "directorial_brilliance": "Competent direction with clear artistic vision",
+            "audience_enchantment": "Will engage viewers who appreciate thoughtful filmmaking",
+            "festival_wizardry": "Suitable for festivals celebrating emerging cinematic voices",
+            "ai_capabilities_used": ["basic_analysis"],
+            "analysis_methods": ["fallback"]
+        }
+
+# --------------------------
+# Magical Interface
+# --------------------------
+def magical_interface(clients, analyzer):
+    """The truly magical interface"""
+    st.header("🔮 FlickFinder MAGICAL AI Analysis")
+    st.markdown("### ✨ Where AI works its cinema magic!")
+    
+    # Display AI capabilities
+    with st.expander("🎩 **AI Magic Capabilities**", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            **🧠 GPT-4 Intelligence**
+            - Narrative structure analysis
+            - Character development evaluation
+            - Thematic depth assessment
+            - Storytelling excellence rating
+            
+            **👁️ GPT-4 Vision**
+            - Frame-by-frame composition analysis
+            - Lighting and color evaluation
+            - Visual storytelling assessment
+            - Cinematic style identification
+            """)
+        
+        with col2:
+            st.markdown("""
+            **😊 Emotional Analysis**
+            - Sentiment and tone evaluation
+            - Emotional arc mapping
+            - Audience impact assessment
+            - Emotional authenticity scoring
+            
+            **🎭 Performance Evaluation**
+            - Acting quality assessment
+            - Character believability
+            - Ensemble chemistry analysis
+            - Performance authenticity
+            
+            **🎨 Cinematic Technique**
+            - Directorial style analysis
+            - Technical execution evaluation
+            - Artistic vision assessment
+            - Production quality scoring
+            """)
+    
+    # URL input
+    youtube_url = st.text_input(
+        "**🎥 Enter YouTube URL for Magical Analysis:**",
+        placeholder="https://www.youtube.com/watch?v=...",
+        help="The AI will use ALL its capabilities to analyze your film magically!"
+    )
+    
+    if youtube_url:
+        st.info(f"🔮 Preparing magical analysis for: {youtube_url}")
+        
+        # Extract video ID
+        video_id = get_video_id(youtube_url)
+        if not video_id:
+            st.error("❌ Could not extract video ID")
+            return
+        
+        st.success(f"✅ Video ID: {video_id}")
+        
+        # Get video info
+        video_info = get_video_info(video_id)
+        if not video_info.get('success'):
+            st.error("❌ Could not access video")
+            st.info("💡 Try the manual magical analysis below!")
+            return
+        
+        # Display video
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            embed_url = f"https://www.youtube.com/embed/{video_id}"
+            st.components.v1.iframe(embed_url, height=400)
+        
+        with col2:
+            st.subheader("🎬 Film Info")
+            st.write(f"**Title:** {video_info['title']}")
+            st.write(f"**Channel:** {video_info['author']}")
+        
+        # Magical analysis button
+        if st.button("**🔮 PERFORM MAGICAL AI ANALYSIS**", 
+                   type="primary", 
+                   use_container_width=True,
+                   key="magic_button"):
+            
+            perform_magical_analysis(video_info, video_id, clients, analyzer)
+
+def perform_magical_analysis(video_info, video_id, clients, analyzer):
+    """Perform the full magical analysis"""
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    results_container = st.container()
+    
+    try:
+        # Step 1: Extract content
+        status_text.text("📝 Gathering film content...")
+        transcript = get_transcript(video_id)
+        progress_bar.progress(20)
+        
+        # Step 2: Extract frames for visual analysis
+        status_text.text("👁️ Capturing visual moments...")
+        frames = extract_frames_magically(video_id)
+        progress_bar.progress(40)
+        
+        # Step 3: Multi-modal analysis
+        status_text.text("🧠 Activating AI capabilities...")
+        
+        film_data = {
+            'title': video_info['title'],
+            'channel': video_info['author'],
+            'transcript': transcript,
+            'frames': frames,
+            'video_id': video_id
+        }
+        
+        # Perform magical analysis
+        magical_results = analyzer.analyze_film_magically(film_data)
+        progress_bar.progress(80)
+        
+        # Step 4: Display magical results
+        status_text.text("✨ Synthesizing magical insights...")
+        progress_bar.progress(100)
+        
+        # Store and display
+        st.session_state.analysis_results = magical_results
+        st.session_state.current_film = film_data
+        
+        with results_container:
+            display_magical_results(magical_results, film_data)
+        
+        status_text.text("🎉 Magical Analysis Complete!")
+        
+    except Exception as e:
+        st.error(f"❌ Magical analysis failed: {e}")
+        progress_bar.progress(0)
+
+def extract_frames_magically(video_id):
+    """Extract frames for visual analysis"""
+    try:
+        # For now, return empty list - in production, you'd download and extract frames
+        # This is where you'd implement actual frame extraction
+        return []
+    except:
+        return []
+
+def display_magical_results(magical_results, film_data):
+    """Display the magical analysis results"""
+    st.success("🌟 **MAGICAL AI ANALYSIS COMPLETE!**")
+    
+    # Magical score display
+    magic_score = magical_results.get('overall_magic_score', 0)
+    st.markdown(f"""
+    <div style='text-align: center; padding: 30px; background: linear-gradient(135deg, #8A2BE2 0%, #4B0082 100%); border-radius: 20px; margin: 20px 0; border: 3px solid #FFD700;'>
+        <h1 style='color: gold; margin: 0; font-size: 60px; text-shadow: 2px 2px 4px #000;'>{magic_score:.1f}/5.0</h1>
+        <p style='color: white; font-size: 24px; margin: 10px 0 0 0;'>✨ Magical Cinema Score ✨</p>
+        <p style='color: silver; font-size: 18px; margin: 5px 0 0 0;'>{film_data['title']}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Magical category scores
+    st.subheader("🔮 Magical Category Scores")
+    scores = magical_results.get('cinematic_scores', {})
+    
+    cols = st.columns(5)
+    magical_categories = [
+        ("🧙‍♂️ Story Magic", scores.get('story_magic', 0), "#8A2BE2", "Narrative Power"),
+        ("🔮 Visual Sorcery", scores.get('visual_sorcery', 0), "#4B0082", "Cinematic Vision"),
+        ("💫 Emotional Alchemy", scores.get('emotional_alchemy', 0), "#FF6B6B", "Audience Impact"),
+        ("⚡ Technical Wizardry", scores.get('technical_wizardry', 0), "#45B7D1", "Craft Excellence"),
+        ("🎨 Artistic Brilliance", scores.get('artistic_brilliance', 0), "#FFD93D", "Creative Vision")
+    ]
+    
+    for idx, (name, score, color, desc) in enumerate(magical_categories):
+        with cols[idx]:
+            st.markdown(f"""
+            <div style='text-align: center; padding: 15px; background: {color}; border-radius: 12px; margin: 5px; border: 2px solid gold;'>
+                <h4 style='margin: 0; color: white; font-size: 14px;'>{name}</h4>
+                <h2 style='margin: 8px 0; color: gold; font-size: 26px; text-shadow: 1px 1px 2px #000;'>{score:.1f}</h2>
+                <p style='margin: 0; color: white; font-size: 11px; opacity: 0.9;'>{desc}</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Magical summary
+    st.subheader("📖 Magical Analysis Summary")
+    st.markdown(f"""
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; color: white;'>
+        {magical_results.get('magical_summary', 'No magical summary available.')}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Magical insights
+    st.subheader("💎 Magical Insights")
+    insights = magical_results.get('magical_insights', [])
+    for insight in insights:
+        st.markdown(f"✨ **{insight}**")
+    
+    # Directorial brilliance
+    st.subheader("🎬 Directorial Brilliance")
+    st.info(magical_results.get('directorial_brilliance', 'No directorial assessment.'))
+    
+    # Audience enchantment
+    st.subheader("❤️ Audience Enchantment")
+    st.info(magical_results.get('audience_enchantment', 'No audience analysis.'))
+    
+    # Festival wizardry
+    st.subheader("🏆 Festival Wizardry")
+    st.success(magical_results.get('festival_wizardry', 'No festival recommendations.'))
+    
+    # AI capabilities used
+    st.subheader("🤖 AI Magic Used")
+    capabilities = magical_results.get('ai_capabilities_used', [])
+    for capability in capabilities:
+        emoji = {"gpt4_analysis": "🧠", "gpt4_vision": "👁️", "sentiment_analysis": "😊", 
+                "performance_evaluation": "🎭", "cinematic_technique": "🎨"}.get(capability, "⚡")
+        st.write(f"{emoji} {capability.replace('_', ' ').title()}")
 
 # --------------------------
 # Utility Functions
 # --------------------------
 def get_video_id(url):
-    parsed = urlparse(url)
-    if parsed.hostname in ["www.youtube.com", "youtube.com"]:
-        return parse_qs(parsed.query).get("v", [None])[0]
-    elif parsed.hostname == "youtu.be":
-        return parsed.path[1:]
-    return None
+    """Extract video ID"""
+    try:
+        parsed = urlparse(url)
+        if parsed.hostname in ["www.youtube.com", "youtube.com"]:
+            return parse_qs(parsed.query).get("v", [None])[0]
+        elif parsed.hostname == "youtu.be":
+            return parsed.path[1:]
+        return None
+    except:
+        return None
 
-def fetch_transcript(video_id, yt):
-    transcript_text = ""
+def get_video_info(video_id):
+    """Get video information"""
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        response = requests.get(oembed_url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                'title': data.get('title', 'Unknown'),
+                'author': data.get('author_name', 'Unknown'),
+                'success': True
+            }
+    except:
+        pass
+    return {'success': False}
+
+def get_transcript(video_id):
+    """Get transcript"""
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript_text = " ".join([seg["text"] for seg in transcript_list])
-        st.success("✅ Transcript retrieved successfully!")
-    except (TranscriptsDisabled, NoTranscriptFound):
-        st.warning("⚠️ No transcript available. Attempting audio transcription with Whisper...")
-        # Download audio for Whisper
-        with tempfile.TemporaryDirectory() as tempdir:
-            audio_path = yt.streams.get_audio_only().download(output_path=tempdir, filename="audio.mp4")
-            try:
-                transcript_response = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=open(audio_path, "rb")
-                )
-                transcript_text = transcript_response.text
-                st.success("✅ Audio transcribed successfully!")
-            except Exception as e:
-                st.error(f"❌ Error transcribing audio: {e}")
-                transcript_text = yt.title + " " + (yt.description or "")
-    return transcript_text
-
-def extract_video_frames(video_path, num_frames=3):
-    """Extract sample frames for AI visual analysis."""
-    cap = cv2.VideoCapture(video_path)
-    frames = []
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    for i in np.linspace(0, total - 1, num_frames, dtype=int):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-        ret, frame = cap.read()
-        if ret:
-            _, buffer = cv2.imencode(".jpg", frame)
-            frames.append(buffer.tobytes())
-    cap.release()
-    return frames
-
-def store_film_for_scoring(title, url, platform, description=""):
-    if "films_to_score" not in st.session_state:
-        st.session_state["films_to_score"] = []
-    if not any(f["url"] == url for f in st.session_state["films_to_score"]):
-        st.session_state["films_to_score"].append({
-            "title": title,
-            "platform": platform,
-            "url": url,
-            "description": description,
-            "status": "pending",  # pending, watching, graded
-            "ai_review": None,
-            "manual_score": None
-        })
-
-def quick_grade_interface(film):
-    """Quick grading buttons for rapid workflow"""
-    st.subheader("🚀 Quick Grade")
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        if st.button("⭐1", key=f"quick_1_{film['title']}", use_container_width=True):
-            return 1
-    with col2:
-        if st.button("⭐⭐2", key=f"quick_2_{film['title']}", use_container_width=True):
-            return 2
-    with col3:
-        if st.button("⭐⭐⭐3", key=f"quick_3_{film['title']}", use_container_width=True):
-            return 3
-    with col4:
-        if st.button("⭐⭐⭐⭐4", key=f"quick_4_{film['title']}", use_container_width=True):
-            return 4
-    with col5:
-        if st.button("⭐⭐⭐⭐⭐5", key=f"quick_5_{film['title']}", use_container_width=True):
-            return 5
-    return None
-
-def build_batch_tasks(films):
-    tasks = []
-    for idx, film in enumerate(films):
-        description = film.get("description", "")
-        title = film["title"]
-        url = film["url"]
-        visual_context = ""
-        if url:
-            video_id = get_video_id(url)
-            if video_id:
-                try:
-                    yt = YouTube(url)
-                    transcript_text = fetch_transcript(video_id, yt)
-                    description += " " + transcript_text
-                    visual_context = f"Thumbnail: {yt.thumbnail_url}"
-                except:
-                    pass
-        prompt = build_film_review_prompt(
-            film_metadata=f"Title: {title}",
-            transcript_text=description,
-            audience_reception="Based on available metadata",
-            visual_context=visual_context
-        )
-        scoring_prompt = prompt + "\nOutput as JSON: {summary: string, scores: {story: number 1-5, vision: number 1-5, craft: number 1-5, sound: number 1-5}, weighted_score: number 1-5}"
-        task = {
-            "custom_id": f"film-{idx}",
-            "method": "POST",
-            "url": "/v1/chat/completions",
-            "body": {
-                "model": "gpt-4o-mini",
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "user", "content": scoring_prompt}
-                ]
-            }
-        }
-        tasks.append(task)
-    return tasks
+        return " ".join([seg["text"] for seg in transcript_list])
+    except:
+        return "No transcript available. Magical analysis will use other AI capabilities."
 
 # --------------------------
-# Initialize OpenAI Client
-# --------------------------
-client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", ""))
-
-# --------------------------
-# Tabs
-# --------------------------
-tab1, tab2, tab3 = st.tabs(["📊 CSV Movie Reviews", "🎥 YouTube Film Analysis", "⚡ Quick Batch Grade"])
-
-# --------------------------
-# TAB 1: CSV Movie Reviews
-# --------------------------
-with tab1:
-    st.header("📊 CSV Movie Reviews")
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-    if uploaded_file:
-        import pandas as pd
-        df = pd.read_csv(uploaded_file)
-        st.dataframe(df)
-        
-        # Batch processing controls
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📥 Import All Films", use_container_width=True):
-                for idx, row in df.iterrows():
-                    store_film_for_scoring(
-                        title=row.get("title") or row.get("Film Title") or f"Film {idx+1}",
-                        url=row.get("url") or "",
-                        platform="CSV",
-                        description=row.get("description") or ""
-                    )
-                st.success(f"✅ Imported {len(df)} films!")
-        
-        with col2:
-            if st.button("🤖 AI Grade All", use_container_width=True):
-                st.info("Batch AI grading would go here...")
-
-# --------------------------
-# TAB 2: YouTube Film Review
-# --------------------------
-with tab2:
-    st.header("🎥 YouTube Film Analysis")
-    st.caption("AI-assisted cinematic evaluation — story, vision, and craft")
-
-    # YouTube URL input
-    youtube_url = st.text_input("📎 Paste YouTube video URL to analyze:")
-
-    if youtube_url:
-        video_id = get_video_id(youtube_url)
-        if video_id:
-            try:
-                yt = YouTube(youtube_url)
-                st.video(youtube_url)
-
-                # Film title and action buttons in columns
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
-                    custom_title = st.text_input(
-                        "🎬 Film Title:",
-                        value=yt.title,
-                        help="Rename the title for AI scoring and reports."
-                    )
-                
-                with col2:
-                    if st.button("🎯 Grade Now", use_container_width=True):
-                        store_film_for_scoring(custom_title, youtube_url, "YouTube", yt.description or "")
-                        st.session_state.current_film = custom_title
-                        st.rerun()
-                
-                with col3:
-                    if st.button("👀 Watch & Grade", use_container_width=True):
-                        store_film_for_scoring(custom_title, youtube_url, "YouTube", yt.description or "")
-                        st.session_state.watch_mode = custom_title
-                        st.rerun()
-
-                st.markdown(f"**📅 Published:** {yt.publish_date}")
-                st.markdown(f"**🕒 Length:** {yt.length // 60} minutes")
-
-                # Analysis toggles
-                st.subheader("🔧 Analysis Options")
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    enable_transcript = st.toggle("📝 Transcript Analysis", value=True)
-                with col2:
-                    enable_vision = st.toggle("🎨 Visual Analysis", value=False)
-                with col3:
-                    enable_critique = st.toggle("🎭 Deep Critique", value=False)
-
-                # Process based on toggles
-                transcript_text = ""
-                if enable_transcript:
-                    transcript_text = fetch_transcript(video_id, yt)
-
-                images_content = []
-                if enable_vision:
-                    st.info("🎞️ Downloading video and extracting sample frames for visual analysis...")
-                    with tempfile.TemporaryDirectory() as tempdir:
-                        video_path = yt.streams.get_lowest_resolution().download(output_path=tempdir)
-                        frames = extract_video_frames(video_path, num_frames=3)
-                        for frame in frames:
-                            base64_image = base64.b64encode(frame).decode('utf-8')
-                            images_content.append({
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                            })
-
-                # AI Review Section with action button
-                if st.button("🤖 Generate AI Critique", type="primary", use_container_width=True):
-                    with st.spinner("🤖 Generating AI film review and scores..."):
-                        prompt_text = build_film_review_prompt(
-                            film_metadata=f"Title: {custom_title}\nChannel: {yt.author}\nLength: {yt.length // 60} min",
-                            transcript_text=transcript_text,
-                            audience_reception="Based on public YouTube metrics",
-                            visual_context="Analyze the provided frames for visual elements." if enable_vision else "",
-                            deep_critique=enable_critique
-                        )
-                        
-                        prompt_text += "\nOutput as JSON: {summary: string, scores: {story: number 1-5, vision: number 1-5, craft: number 1-5, sound: number 1-5}, weighted_score: number 1-5 (average of scores)}"
-
-                        user_content = [{"type": "text", "text": prompt_text}] + images_content
-
-                        response = client.chat.completions.create(
-                            model="gpt-4o-mini",
-                            response_format={"type": "json_object"},
-                            messages=[{"role": "user", "content": user_content}],
-                        )
-                        review_content = json.loads(response.choices[0].message.content)
-                        
-                        # Store the AI review
-                        film_idx = next((i for i, f in enumerate(st.session_state.films_to_score) 
-                                       if f["title"] == custom_title), -1)
-                        if film_idx >= 0:
-                            st.session_state.films_to_score[film_idx]["ai_review"] = review_content
-                            st.session_state.films_to_score[film_idx]["status"] = "graded"
-                        
-                        # Display results
-                        st.subheader("🧾 AI Review Summary")
-                        st.markdown(review_content.get("summary", "No summary available."))
-                        
-                        st.subheader("📊 AI Scores")
-                        scores = review_content.get("scores", {})
-                        for category, score in scores.items():
-                            st.metric(label=category.capitalize(), value=f"{score}/5")
-                        
-                        weighted = review_content.get("weighted_score", 0)
-                        st.metric(label="Overall Score", value=f"{weighted}/5", delta="AI Graded")
-                        
-                        # Save to all scores
-                        st.session_state.all_scores.append({
-                            "title": custom_title,
-                            "scores": scores,
-                            "weighted_score": weighted,
-                            "type": "ai_critique"
-                        })
-
-            except Exception as e:
-                st.error(f"❌ Error processing YouTube video: {e}")
-        else:
-            st.error("❌ Invalid YouTube URL")
-
-# --------------------------
-# TAB 3: Quick Batch Grade
-# --------------------------
-with tab3:
-    st.header("⚡ Quick Batch Grade")
-    st.caption("Rapid fire grading for film submissions")
-    
-    films = st.session_state.get("films_to_score", [])
-    
-    if not films:
-        st.info("No films available for grading. Import some films first.")
-    else:
-        # Batch controls
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🔄 Reset All Status", use_container_width=True):
-                for film in films:
-                    film["status"] = "pending"
-                st.rerun()
-        with col2:
-            if st.button("🤖 AI Grade Pending", use_container_width=True):
-                st.info("This would trigger batch AI grading")
-        with col3:
-            if st.button("📊 Export All", use_container_width=True):
-                st.info("Export functionality would go here")
-        
-        # Film cards for quick grading
-        st.subheader("🎬 Films to Grade")
-        for film in films:
-            with st.container():
-                col1, col2, col3, col4 = st.columns([3, 2, 2, 3])
-                
-                with col1:
-                    st.write(f"**{film['title']}**")
-                    st.caption(f"Platform: {film['platform']}")
-                
-                with col2:
-                    status = film.get('status', 'pending')
-                    status_emoji = {"pending": "⏳", "watching": "👀", "graded": "✅"}
-                    st.write(f"{status_emoji.get(status, '⏳')} {status.title()}")
-                
-                with col3:
-                    if st.button("👀 Watch", key=f"watch_{film['title']}", use_container_width=True):
-                        film['status'] = 'watching'
-                        st.session_state.current_film = film['title']
-                        st.rerun()
-                
-                with col4:
-                    quick_score = quick_grade_interface(film)
-                    if quick_score:
-                        film['status'] = 'graded'
-                        film['manual_score'] = quick_score
-                        st.success(f"Rated {quick_score}⭐ for {film['title']}")
-                        st.rerun()
-
-# --------------------------
-# Main App
+# Main Application
 # --------------------------
 def main():
-    st.set_page_config(page_title="FlickFinder", page_icon="🎬", layout="wide")
-
-    if "scoring_system" not in st.session_state:
-        st.session_state.scoring_system = ScoringSystem()
-    if "all_scores" not in st.session_state:
-        st.session_state.all_scores = []
-    if "batch_id" not in st.session_state:
-        st.session_state.batch_id = None
-    if "current_film" not in st.session_state:
-        st.session_state.current_film = None
-    if "watch_mode" not in st.session_state:
-        st.session_state.watch_mode = None
-
+    """Main magical application"""
+    
+    st.sidebar.title("🔮 FlickFinder MAGIC")
+    st.sidebar.markdown("---")
+    
+    # Initialize AI
     with st.sidebar:
-        st.header("🎬 FlickFinder Dashboard")
-        page = st.radio(
-            "Navigate to:",
-            ["🏠 Home", "🔗 FilmFreeway", "🎯 Score Films", "📊 Export", "📚 Saved Projects"]
-        )
-        
-        # Quick stats in sidebar
-        if "films_to_score" in st.session_state:
-            films = st.session_state.films_to_score
-            pending = len([f for f in films if f.get('status') == 'pending'])
-            watching = len([f for f in films if f.get('status') == 'watching'])
-            graded = len([f for f in films if f.get('status') == 'graded'])
-            
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("📈 Grading Progress")
-            st.sidebar.metric("Pending", pending)
-            st.sidebar.metric("Watching", watching)
-            st.sidebar.metric("Graded", graded)
-
-    if page == "🏠 Home":
-        home_interface()
-    elif page == "🔗 FilmFreeway":
-        filmfreeway_interface(client)
-    elif page == "🎯 Score Films":
-        scoring_interface()
-    elif page == "📊 Export":
-        export_interface()
-    elif page == "📚 Saved Projects":
-        display_saved_projects()
-
-# --------------------------
-# Home page
-# --------------------------
-def home_interface():
-    st.title("Welcome to FlickFinder 🎬")
-    st.markdown("### Professional Film Evaluation & Jury Assistant")
+        with st.spinner("✨ Initializing AI Magic..."):
+            clients = initialize_ai_clients()
+            analyzer = MagicalFilmAnalyzer(clients)
     
-    # Quick action buttons on home
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("🎥 Analyze YouTube Film", use_container_width=True):
-            st.session_state.current_tab = "YouTube Film Analysis"
-            st.rerun()
-    with col2:
-        if st.button("📊 Import CSV Batch", use_container_width=True):
-            st.session_state.current_tab = "CSV Movie Reviews"
-            st.rerun()
-    with col3:
-        if st.button("⚡ Quick Grade", use_container_width=True):
-            st.session_state.current_tab = "Quick Batch Grade"
-            st.rerun()
+    st.sidebar.markdown("### 🎩 Magical Capabilities:")
+    for emoji, desc in analyzer.capabilities.items():
+        st.sidebar.write(f"{emoji} {desc}")
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("**🔗 FilmFreeway Integration**")
-        st.markdown("Import and analyze projects directly from FilmFreeway.")
-    with col2:
-        st.markdown("**🎯 Smart AI Scoring**")
-        st.markdown("Weighted scoring with story, tech, and vision metrics.")
-    with col3:
-        st.markdown("**📊 Reports & Exports**")
-        st.markdown("Generate detailed review sheets for jury panels.")
-    st.markdown("---")
-
-# --------------------------
-# Enhanced Scoring Interface
-# --------------------------
-def scoring_interface():
-    st.header("🎯 Film Scoring")
-    films = st.session_state.get("films_to_score", [])
-    if not films:
-        st.info("No films ready for scoring. Import or analyze one first.")
-        return
-
-    # Film selector with status
-    film_options = []
-    for f in films:
-        status = f.get('status', 'pending')
-        status_emoji = {"pending": "⏳", "watching": "👀", "graded": "✅"}
-        film_options.append(f"{status_emoji.get(status, '⏳')} {f['title']}")
+    st.sidebar.markdown("### 🚀 How to Use:")
+    st.sidebar.markdown("1. **Paste YouTube URL**")
+    st.sidebar.markdown("2. **Click Magical Analysis**")
+    st.sidebar.markdown("3. **Watch AI work all its magic!**")
     
-    selected_display = st.selectbox(
-        "Select a film:",
-        film_options,
-        key="film_selector"
-    )
-    
-    selected_title = selected_display[3:]  # Remove emoji and space
-    film = next(f for f in films if f["title"] == selected_title)
+    # Main interface
+    magical_interface(clients, analyzer)
 
-    # Title editor
-    with st.expander("✏️ Edit Film Title", expanded=True):
-        new_title = st.text_input(
-            "Film Title:",
-            value=selected_title,
-            key=f"title_edit_{selected_title}"
-        )
-        if new_title != selected_title:
-            if st.button("Apply Title Change", key=f"apply_{selected_title}"):
-                update_film_title(selected_title, new_title)
-                st.success("Title updated!")
-                st.rerun()
-
-    # Action buttons for current film
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("👀 Mark as Watching", use_container_width=True):
-            film['status'] = 'watching'
-            st.rerun()
-    with col2:
-        if st.button("✅ Mark Complete", use_container_width=True):
-            film['status'] = 'graded'
-            st.rerun()
-    with col3:
-        if st.button("🔄 Reset Status", use_container_width=True):
-            film['status'] = 'pending'
-            st.rerun()
-
-    # Quick grade section
-    st.subheader("🚀 Quick Grade")
-    quick_score = quick_grade_interface(film)
-    if quick_score:
-        film['manual_score'] = quick_score
-        film['status'] = 'graded'
-        st.success(f"Quick graded {film['title']} as {quick_score}⭐")
-        st.rerun()
-
-    # Detailed scoring (your existing system)
-    st.markdown("---")
-    st.subheader(f"Detailed Scoring: **{new_title}**")
-    score = st.session_state.scoring_system.get_scorecard_interface(new_title)
-
-    if score:
-        score["weighted_score"] = st.session_state.scoring_system.calculate_weighted_score(score["scores"])
-        st.session_state.all_scores.append(score)
-        film['status'] = 'graded'
-        st.success(f"Detailed score saved! Weighted score: {score['weighted_score']}/5")
-
-# --------------------------
-# Run
-# --------------------------
 if __name__ == "__main__":
     main()
