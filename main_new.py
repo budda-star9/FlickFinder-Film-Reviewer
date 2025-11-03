@@ -6,13 +6,9 @@ from openai import OpenAI
 from pytube import YouTube
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from urllib.parse import urlparse, parse_qs
-from ai_prompt import build_film_review_prompt
 
-# --------------------------
-# Utility Functions
-# --------------------------
+# --- Utility function to get video ID safely ---
 def get_video_id(url):
-    """Extract YouTube video ID safely."""
     parsed_url = urlparse(url)
     if parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
         return parse_qs(parsed_url.query).get("v", [None])[0]
@@ -20,65 +16,11 @@ def get_video_id(url):
         return parsed_url.path[1:]
     return None
 
-def fetch_transcript(video_id, yt):
-    """Retrieve transcript or fallback to title+description."""
-    try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript_text = " ".join([seg["text"] for seg in transcript_list])
-        st.success("✅ Transcript retrieved successfully!")
-    except (TranscriptsDisabled, NoTranscriptFound):
-        st.warning("⚠️ No transcript available. Using title + description.")
-        transcript_text = yt.title + " " + (yt.description or "")
-    return transcript_text
-
-def store_film_for_scoring(title, url, platform, description=""):
-    """Add film entry to session_state if not already present."""
-    if "films_to_score" not in st.session_state:
-        st.session_state["films_to_score"] = []
-    if not any(f["url"] == url for f in st.session_state["films_to_score"]):
-        st.session_state["films_to_score"].append({
-            "title": title,
-            "platform": platform,
-            "url": url,
-            "description": description
-        })
-
-# --------------------------
-# Initialize OpenAI Client
-# --------------------------
+# --- Initialize OpenAI client ---
 client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", ""))
 
-# --------------------------
-# Tabs
-# --------------------------
+# --- Tabs ---
 tab1, tab2 = st.tabs(["📊 CSV Movie Reviews", "🎥 YouTube Film Analysis"])
-
-# --------------------------
-# TAB 1: CSV Movie Reviews
-# --------------------------
-with tab1:
-    st.header("📊 CSV Movie Reviews")
-    st.caption("Upload CSV or FilmFreeway projects to analyze and score films")
-
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-    if uploaded_file:
-        import pandas as pd
-        df = pd.read_csv(uploaded_file)
-        st.dataframe(df)
-
-        # Add each CSV film to scoring session
-        for idx, row in df.iterrows():
-            store_film_for_scoring(
-                title=row.get("title") or row.get("Film Title") or f"Film {idx+1}",
-                url=row.get("url") or "",
-                platform="CSV",
-                description=row.get("description") or ""
-            )
-
-    st.subheader("🎬 Films Ready for Scoring")
-    if "films_to_score" in st.session_state:
-        for f in st.session_state["films_to_score"]:
-            st.write(f"**Title:** {f['title']}  |  Platform: {f['platform']}")
 
 # --------------------------
 # TAB 2: YouTube Film Review
@@ -97,28 +39,49 @@ with tab2:
             try:
                 yt = YouTube(youtube_url)
                 st.video(youtube_url)
-                # ---------------------------------
-                # 🎬 Editable film title field
-                # ---------------------------------
-                custom_title = st.text_input(
-                   "🎬 Enter or Edit Film Title for Scoring:",
-                    value=yt.title,
-                    help="Rename the title if you want to customize how it appears in scoring and reports."
-                )
-
                 st.markdown(f"**🎞️ Title:** {yt.title}")
                 st.markdown(f"**📅 Published:** {yt.publish_date}")
                 st.markdown(f"**🕒 Length:** {yt.length // 60} minutes")
 
-                # Fetch transcript
-                transcript_text = fetch_transcript(video_id, yt)
+                # --- Attempt to retrieve transcript ---
+                try:
+                    transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+                    transcript_text = " ".join([seg["text"] for seg in transcript_list])
+                    st.success("✅ Transcript retrieved successfully!")
+                except (TranscriptsDisabled, NoTranscriptFound):
+                    st.warning("⚠️ No transcript available. Using title + description.")
+                    transcript_text = yt.title + " " + (yt.description or "")
 
-                # Store for scoring
-                store_film_for_scoring(custom_title, youtube_url, "YouTube", yt.description or "")
+                # --- AI Prompt ---
+                prompt = f"""
+You are a professional film festival juror. Review and score the film below using objective and metadata-informed criteria.
 
-                # --- AI Review Prompt ---
-                prompt = build_film_review_prompt(film_metadata, transcript_text, audience_reception="Public stats and comments")
+Film Metadata:
+{film_metadata}
 
+Public Reception:
+{audience_reception}
+
+Transcript Excerpt:
+{transcript_text[:2500]}
+
+Scoring Criteria (1–5 scale):
+• Storytelling (35%) — narrative structure, character depth, emotional arc.
+• Technical/Directing (25%) — cinematography, editing, pacing, sound.
+• Artistic Vision (15%) — originality, aesthetic coherence, creative risk.
+• Cultural Fidelity (15%) — authenticity, representation, context.
+• Social Impact (10%) — message, relevance, influence.
+
+Please output:
+1️⃣ A concise synopsis.
+2️⃣ Strengths and weaknesses.
+3️⃣ Numeric scores per category.
+4️⃣ Weighted final score (out of 5.00).
+5️⃣ 2–3 Jury Notes referencing scenes or timestamps.
+"""
+
+
+                # --- Call OpenAI ---
                 with st.spinner("🤖 AI reviewing in progress..."):
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
@@ -130,12 +93,21 @@ with tab2:
 
             except Exception as e:
                 st.error(f"❌ Error processing YouTube video: {e}")
+    else:
+        st.info("Please enter a valid YouTube link to begin.")
 
 # --------------------------
 # Main App
 # --------------------------
 def main():
     st.set_page_config(page_title="FlickFinder", page_icon="🎬", layout="wide")
+
+    # Initialize OpenAI client
+    try:
+        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    except Exception as e:
+        st.error(f"OpenAI client initialization failed: {e}")
+        client = None
 
     # Initialize scoring system
     if "scoring_system" not in st.session_state:
@@ -156,7 +128,10 @@ def main():
     if page_option == "🏠 Home":
         home_interface()
     elif page_option == "🔗 FilmFreeway":
-        filmfreeway_interface(client)
+        if client:
+            filmfreeway_interface(client)
+        else:
+            st.error("OpenAI client not initialized. Check your API key.")
     elif page_option == "🎯 Score Films":
         scoring_interface()
     elif page_option == "📊 Export":
@@ -181,28 +156,35 @@ def home_interface():
         st.markdown("**📊 Export Tools**")
         st.markdown("Generate PDF reports and CSV exports for festival management")
     st.markdown("---")
-    st.markdown("Get started by importing films from FilmFreeway or scoring YouTube videos.")
+    st.markdown("Get started by importing films from FilmFreeway or scoring existing projects.")
 
 # --------------------------
 # Scoring interface
 # --------------------------
 def scoring_interface():
     st.header("🎯 Film Scoring")
-    films_to_score = st.session_state.get("films_to_score", [])
-
+    films_to_score = st.session_state.get("filmfreeway_projects", [])
     if not films_to_score:
-        st.info("📥 No films available for scoring. Analyze a YouTube video or import from FilmFreeway first.")
+        st.info("📥 No films available for scoring. Import some films from FilmFreeway section first.")
+        st.markdown("---")
+        st.subheader("Or add a film manually for testing:")
+        manual_film = st.text_input("Film title for manual scoring:")
+        if manual_film and st.button("Add for Scoring"):
+            if "filmfreeway_projects" not in st.session_state:
+                st.session_state.filmfreeway_projects = []
+            st.session_state.filmfreeway_projects.append({
+                "title": manual_film,
+                "platform": "Manual Entry",
+                "url": "N/A"
+            })
+            st.rerun()
         return
 
-    film_titles = [f["title"] for f in films_to_score]
+    film_titles = [project.get("title", f"Project {i+1}") for i, project in enumerate(films_to_score)]
     selected_film = st.selectbox("Select film to score:", film_titles)
 
     if selected_film:
-        # Retrieve selected film object
-        film_obj = next(f for f in films_to_score if f["title"] == selected_film)
-
         score_result = st.session_state.scoring_system.get_scorecard_interface(selected_film)
-
         if score_result:
             score_result["weighted_score"] = st.session_state.scoring_system.calculate_weighted_score(score_result["scores"])
             st.session_state.all_scores.append(score_result)
