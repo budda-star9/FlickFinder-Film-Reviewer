@@ -17,10 +17,14 @@ import io
 import nltk
 from textblob import TextBlob
 from collections import Counter
-import spacy
+
+# Optional spaCy - don't fail if not available
 try:
+    import spacy
     nlp = spacy.load("en_core_web_sm")
+    SPACY_AVAILABLE = True
 except:
+    SPACY_AVAILABLE = False
     pass
 
 # --------------------------
