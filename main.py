@@ -1,25 +1,36 @@
 import streamlit as st
-from filmfreeway_analyzer import filmfreeway_interface, display_saved_projects
-from scoring_system import ScoringSystem
-from export_system import export_interface
-from openai import OpenAI
-from pytube import YouTube
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import random
+import re
+import hashlib
+import time
+import nltk
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from collections import Counter
+import requests
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from urllib.parse import urlparse, parse_qs
-from ai_prompt import build_film_review_prompt
 
-prompt = build_film_review_prompt(
-    film_metadata=f"Title: {custom_title}\nChannel: {yt.author}\nLength: {yt.length // 60} min\nTags: {yt.keywords if hasattr(yt, 'keywords') else 'N/A'}",
-    transcript_text=transcript_text,
-    audience_reception="Views: 1500 | Likes: 120 | Comments: 15",
-    visual_context=visual_context  # can be empty string if toggle off
-)
+# ------------------------------------------------
+# 1.  GRACE CONSTANTS  (new)
+# ------------------------------------------------
+GRACE_FLOOR        = 2.8
+GRACE_CULTURE      = 0.45
+GRACE_ORAL         = 0.35
+GRACE_COMMUNITY    = 0.30
+GRACE_INGENUITY    = 0.40
+GRACE_RELEVANCE    = 0.25
 
-response = client.chat.completions.create(
-    model="gpt-4o-mini",  # or gpt-5 if you want multimodal in future
-    messages=[{"role": "user", "content": prompt}],
-)
+# ------------------------------------------------
+# 2.  Helper for oral/community phrases
+# ------------------------------------------------
 
+def anyphrase(text, phrases):
+    """Return True if any phrase is in the text."""
+    text = text.lower()
+    return any(p.lower() in text for p in phrases)
 # --- Utility function to get video ID safely ---
 def get_video_id(url):
     parsed_url = urlparse(url)
