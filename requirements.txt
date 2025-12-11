@@ -1,7 +1,26 @@
+# Core Dependencies
 streamlit>=1.28.0
 pandas>=2.0.0
 numpy>=1.24.0
+
+# Natural Language Processing
 nltk>=3.8.0
 vaderSentiment>=3.3.2
+
+# YouTube Integration
 youtube-transcript-api>=0.6.0
+pytube>=15.0.0
+youtube-search-python>=1.6.6
+
+# HTTP Requests & Web
 requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Data Visualization
+plotly>=5.22.0
+plotly-express>=0.4.1
+
+# Data Processing & Utilities
+scipy>=1.11.0
+python-dateutil>=2.8.2
